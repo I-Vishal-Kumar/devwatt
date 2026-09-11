@@ -1,0 +1,5 @@
+# Build output (installer\build.ps1 writes both)
+bin/
+dist/
+*.exe
+*.exe~

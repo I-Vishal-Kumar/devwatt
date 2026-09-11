@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>devwatt</title>
+<script>
+  // Theme, before anything paints. The saved setting arrives with the first
+  // snapshot; until then the OS preference decides, so a dark desktop never
+  // sees a white flash and the first snapshot corrects it if the user chose
+  // otherwise.
+  document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+</script>
+<style>
+  /* Every colour on the page is one of these roles, defined once per theme;
+     color-scheme goes with them so native controls and scrollbars follow. */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #111318; --surface: #1b1f27; --line: #2a303b; --text: #e6e8ec; --muted: #9aa3b2;
+    --accent: #4cc2ff; --ok: #3ddc84; --mid: #ffb454; --low: #ff6b6b;
+    --button: #262c37; --input: #0d0f13; --error-bg: #3a1d1d; --hot: #3a2323;
+    --pill-on: #16331f; --pill-off: #262c37; --badge-text: #111318; --bolt: #ffffff;
+    --chart-trace: #4cc2ff; --chart-area: #4cc2ff; --chart-grid: #2a303b; --chart-base: #ffb454;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f5f8; --surface: #ffffff; --line: #d9dde5; --text: #1b1f27; --muted: #5f6675;
+    --accent: #0b7fc2; --ok: #1e8e4b; --mid: #b26a00; --low: #c62828;
+    --button: #e9ecf1; --input: #ffffff; --error-bg: #fdecec; --hot: #fde8e8;
+    --pill-on: #dff5e7; --pill-off: #e9ecf1; --badge-text: #ffffff; --bolt: #1b1f27;
+    --chart-trace: #0b7fc2; --chart-area: #0b7fc2; --chart-grid: #d9dde5; --chart-base: #b26a00;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px 20px 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, "Segoe UI", sans-serif;
+         height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  h2 { font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+       color: var(--muted); margin: 24px 0 8px; }
+  .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+  .dim { color: var(--muted); }
+  button { background: var(--button); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+           padding: 5px 12px; font: inherit; cursor: pointer; transition: background-color 150ms, opacity 150ms; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.danger { border-color: var(--low); color: var(--low); }
+  button.icon { padding: 5px; line-height: 0; margin-left: auto; }
+  button.icon svg { width: 18px; height: 18px; fill: currentColor; }
+  :root[data-theme="dark"] .moon, :root[data-theme="light"] .sun { display: none; }
+  input[type=number] { width: 90px; background: var(--input); color: var(--text); border: 1px solid var(--line);
+                       border-radius: 6px; padding: 4px 8px; font: inherit; }
+  #error { background: var(--error-bg); color: var(--low); border: 1px solid var(--low); border-radius: 6px;
+           padding: 8px 12px; margin-top: 12px; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-top: 14px; }
+  .tabs button { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0;
+                 padding: 8px 14px; color: var(--muted); transition: color 150ms, border-color 150ms; }
+  .tabs button:hover { color: var(--text); border-bottom-color: var(--line); }
+  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .badge { background: var(--accent); color: var(--badge-text); border-radius: 999px; padding: 0 6px;
+           font-size: 11px; font-weight: 600; margin-left: 6px; }
+  .toolbar { display: flex; justify-content: flex-end; margin-top: 12px; }
+  main { flex: 1; min-height: 0; }
+  .panel { height: 100%; overflow-y: auto; padding-bottom: 24px;
+           scrollbar-width: thin; scrollbar-color: var(--line) var(--bg); }
+  .panel > h2:first-child, .panel > p:first-child { margin-top: 16px; }
+
+  header { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+  .status { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 120px; }
+  .battery .body { fill: none; stroke: var(--muted); stroke-width: 2; }
+  .battery .nub { fill: var(--muted); }
+  .level { transition: width 300ms; }
+  .level.ok { fill: var(--ok); } .level.mid { fill: var(--mid); } .level.low { fill: var(--low); }
+  .bolt { fill: var(--bolt); stroke: var(--bg); stroke-width: 1.5; stroke-linejoin: round; }
+  .caption { font-size: 18px; font-weight: 600; margin-top: 4px; }
+  .big { font-size: 40px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .chip { background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+          display: inline-flex; gap: 10px; align-items: center; }
+
+  #chart svg { width: 100%; height: auto; display: block; background: var(--surface); border-radius: 8px; }
+  .axis { stroke: var(--chart-grid); stroke-width: 1; }
+  .label { fill: var(--muted); font-size: 11px; }
+  .trace { fill: none; stroke: var(--chart-trace); stroke-width: 2; stroke-linejoin: round; }
+  .area { fill: var(--chart-area); opacity: .12; }
+  .base { stroke: var(--chart-base); stroke-width: 1; stroke-dasharray: 6 4; }
+  .head { fill: var(--chart-trace); transform-box: fill-box; transform-origin: center;
+          animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.8); opacity: .35; } }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .row .grow { flex: 1; }
+  .pill { border-radius: 999px; padding: 1px 9px; font-size: 12px; transition: background-color 150ms, opacity 150ms; }
+  .pill.running { background: var(--pill-on); color: var(--ok); }
+  .pill.stopped { background: var(--pill-off); color: var(--muted); }
+  .note { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .cost { margin-top: 6px; font-size: 13px; transition: background-color 150ms, opacity 150ms; }
+
+  .sugg { display: grid; grid-template-columns: 1fr 2fr auto; gap: 8px 14px; align-items: center; padding: 6px 0;
+          border-bottom: 1px solid var(--line); }
+  .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.num, th.num { text-align: right; }
+  tr.hot td { background: var(--hot); }
+
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  li.quiet { color: var(--muted); }
+  .time { color: var(--muted); margin-right: 8px; }
+  .tag { margin-left: 8px; font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; }
+
+  form { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+         display: grid; gap: 10px; }
+  label { display: flex; align-items: center; gap: 8px; }
+  .fields { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-end; }
+  .fields label { flex-direction: column; align-items: flex-start; gap: 4px; font-size: 12px; color: var(--muted); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; background: none; color: var(--muted); }
+  .seg button[aria-checked="true"] { background: var(--button); color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <div class="status">
+    <svg class="battery" viewBox="0 0 64 32" width="64" height="32" aria-hidden="true">
+      <rect class="body" x="2" y="4" width="54" height="24" rx="4"/>
+      <rect class="nub" x="57" y="12" width="5" height="8" rx="1"/>
+      <rect class="level" id="level" x="5" y="7" width="0" height="18" rx="2"/>
+      <path class="bolt" id="bolt" d="M32 5 L22 18 H29 L27 27 L38 13 H31 Z" display="none"/>
+    </svg>
+    <div class="caption" id="caption"></div>
+    <div class="dim" id="subcap"></div>
+  </div>
+  <div>
+    <div class="big" id="big">...</div>
+    <div class="dim" id="sub"></div>
+  </div>
+  <div class="chip"><span id="baseline">no baseline yet</span><button id="setBaseline">Set current</button></div>
+  <button class="icon" id="themeToggle" title="Switch light/dark" aria-label="Switch light/dark">
+    <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm-1-5h2v3h-2zm0 19h2v3h-2zM2 11h3v2H2zm17 0h3v2h-3zM4.2 5.6l1.4-1.4 2.1 2.1-1.4 1.4zm12.1 12.1l1.4-1.4 2.1 2.1-1.4 1.4zM4.2 18.4l2.1-2.1 1.4 1.4-2.1 2.1zm12.1-12.1l2.1-2.1 1.4 1.4-2.1 2.1z"/></svg>
+    <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3a9 9 0 1 0 7 14.5A8 8 0 0 1 14 3z"/></svg>
+  </button>
+</header>
+<div id="error" hidden></div>
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+  <button role="tab" data-tab="suggested" aria-selected="false">Suggested</button>
+  <button role="tab" data-tab="notices" aria-selected="false">Notifications<span class="badge" id="badge" hidden></span></button>
+  <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
+</nav>
+<main>
+  <section class="panel" id="tab-overview">
+    <h2>Draw, last 5 minutes</h2>
+    <div id="chart"></div>
+    <h2>Managed services</h2>
+    <div id="managed" class="cards"></div>
+    <div class="dim" id="noManaged" hidden>No managed services found.</div>
+    <h2>Top processes</h2>
+    <table id="processes"></table>
+  </section>
+  <section class="panel" id="tab-suggested" hidden>
+    <p class="dim">Services devwatt found but does not manage yet. Click Manage to add one to Managed; the path tells you what it is.</p>
+    <div id="suggested"></div>
+  </section>
+  <section class="panel" id="tab-notices" hidden>
+    <div class="toolbar"><button id="clearNotices" disabled>Clear all</button></div>
+    <ul id="notices"></ul>
+  </section>
+  <section class="panel" id="tab-settings" hidden>
+    <form id="settings"></form>
+  </section>
+</main>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtW = mw => (mw / 1000).toFixed(1) + ' W';
+const fmtNum = mw => (mw / 1000).toFixed(1);
+const signedW = mw => (mw >= 0 ? '+' : '-') + fmtW(Math.abs(mw));
+const setText = (el, s) => { if (el.textContent !== s) el.textContent = s; };
+
+// Every bound call goes through here so a rejection lands in the error strip
+// and the next success clears it.
+function call(name, ...args) {
+  return window[name](...args).then(v => { $('error').hidden = true; return v; }, e => {
+    $('error').textContent = name + ': ' + e;
+    $('error').hidden = false;
+    throw e;
+  });
+}
+
+// ---- Theme. The saved setting is applied on every snapshot; "system"
+// follows the OS preference and tracks it as it changes.
+const prefersDark = matchMedia('(prefers-color-scheme: dark)');
+let themeSetting = 'system';
+function applyTheme() {
+  document.documentElement.dataset.theme =
+    themeSetting === 'system' ? (prefersDark.matches ? 'dark' : 'light') : themeSetting;
+}
+prefersDark.addEventListener('change', applyTheme);
+function updateTheme(v) {
+  themeSetting = v.settings.theme;
+  applyTheme();
+}
+
+// ---- Header: the numbers ease toward the latest snapshot every frame; the
+// words change on the snapshot itself.
+const EASE = 0.12;
+const head = { onBattery: false, full: false, charging: false, percent: 0, words: '', subcapAC: '',
+               mw: null, hours: null, mwTarget: 0, hoursTarget: 0 };
+
+function updateHeader(v) {
+  head.onBattery = v.onBattery;
+  head.full = v.full;
+  head.charging = v.charging;
+  head.percent = v.percent;
+  // The one tweened number is the draw on battery and the charge rate on AC.
+  head.mwTarget = v.onBattery ? v.avgMW : v.rateMW;
+  head.hoursTarget = v.runtimeH;
+  if (head.mw === null) { head.mw = head.mwTarget; head.hours = v.runtimeH; }
+
+  const level = $('level');
+  level.setAttribute('width', 48 * Math.min(100, v.percent) / 100);
+  level.setAttribute('class', `level ${v.percent > 50 ? 'ok' : v.percent >= 20 ? 'mid' : 'low'}`);
+  show($('bolt'), !v.onBattery);
+  setText($('caption'), v.onBattery ? 'In use' : 'Plugged in');
+  head.subcapAC = v.charging ? `Charging · ${v.percent}%`
+                : v.percent >= 100 ? 'Fully charged' : `Not charging · ${v.percent}%`;
+
+  const words = [];
+  if (v.onBattery) { if (v.full) words.push(`swing ${fmtW(v.swingMW)} · ${v.steady ? 'steady' : 'unstable'}`); }
+  else words.push(v.charging ? 'charge rate' : 'no draw to measure');
+  words.push(`CPU ${v.cpu.toFixed(0)}%`);
+  head.words = words.join(' · ');
+  setText($('baseline'), v.baselineMW > 0 ? `baseline ${fmtW(v.baselineMW)}`
+                                          : 'no baseline — click Set current when idle on battery');
+}
+
+// ease moves a displayed value toward its target, snapping when it is within
+// tolerance so the last digit settles instead of dithering.
+function ease(value, target, tolerance) {
+  const next = value + (target - value) * EASE;
+  return Math.abs(target - next) < tolerance ? target : next;
+}
+
+function drawHeader() {
+  if (head.mw === null) return;
+  head.mw = ease(head.mw, head.mwTarget, 10);
+  head.hours = ease(head.hours, head.hoursTarget, 0.005);
+  let big = '—', subcap = head.subcapAC;
+  if (head.onBattery) {
+    big = head.full ? fmtW(head.mw) : 'Measuring...';
+    subcap = `${head.hours.toFixed(1)} h left · ${head.percent}%`;
+  } else if (head.charging) {
+    big = '+' + fmtW(head.mw);
+  }
+  setText($('big'), big);
+  setText($('sub'), head.words);
+  setText($('subcap'), subcap);
+}
+
+// ---- Chart: one SVG, built once; every frame repositions what is already
+// there. Time flows at frame rate, the scale eases, nothing is recreated.
+const W = 800, H = 220, L = 52, R = 12, T = 12, B = 26, SPAN = 300000, STEP = 5000;
+const svgNS = 'http://www.w3.org/2000/svg';
+const chart = { history: [], baselineMW: 0, onBattery: false, yMax: 15000, grid: [], ticks: [] };
+
+function el(tag, cls, parent) {
+  const e = document.createElementNS(svgNS, tag);
+  if (cls) e.setAttribute('class', cls);
+  parent.appendChild(e);
+  return e;
+}
+
+function buildChart() {
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  $('chart').appendChild(svg);
+  for (let i = 0; i < 12; i++) {
+    const line = el('line', 'axis', svg), text = el('text', 'label', svg);
+    line.setAttribute('x1', L); line.setAttribute('x2', W - R);
+    text.setAttribute('x', L - 6); text.setAttribute('text-anchor', 'end');
+    chart.grid.push({ line, text });
+  }
+  for (let i = 0; i < 6; i++) {
+    const line = el('line', 'axis', svg), text = el('text', 'label', svg);
+    line.setAttribute('y1', T); line.setAttribute('y2', H - B);
+    text.setAttribute('y', H - 8); text.setAttribute('text-anchor', 'middle');
+    chart.ticks.push({ line, text });
+  }
+  chart.base = el('line', 'base', svg);
+  chart.base.setAttribute('x1', L); chart.base.setAttribute('x2', W - R);
+  chart.area = el('path', 'area', svg);
+  chart.trace = el('path', 'trace', svg);
+  chart.head = el('circle', 'head', svg);
+  chart.head.setAttribute('r', 4);
+}
+
+function updateChart(v) {
+  chart.history = v.history;
+  chart.baselineMW = v.baselineMW;
+  chart.onBattery = v.onBattery;
+}
+
+// show toggles an element by the SVG display attribute; a hidden pool
+// element costs nothing.
+function show(e, on) { if (on) e.removeAttribute('display'); else e.setAttribute('display', 'none'); }
+
+function drawChart() {
+  const now = Date.now(), start = now - SPAN;
+  const pts = chart.history.filter(p => p.t >= start);
+  let peak = Math.max(chart.baselineMW, 10000);
+  for (const p of pts) peak = Math.max(peak, p.mw);
+  const target = Math.ceil(peak * 1.15 / STEP) * STEP;
+  chart.yMax = ease(chart.yMax, target, 1);
+  const x = t => L + (t - start) / SPAN * (W - L - R);
+  const y = mw => T + (1 - mw / chart.yMax) * (H - T - B);
+
+  // Grid every 5 W, thinning to keep within the pool as the scale grows.
+  let step = STEP;
+  while (chart.yMax / step > chart.grid.length - 1) step += STEP;
+  chart.grid.forEach((g, i) => {
+    const mw = i * step, on = mw <= chart.yMax;
+    show(g.line, on); show(g.text, on);
+    if (!on) return;
+    g.line.setAttribute('y1', y(mw)); g.line.setAttribute('y2', y(mw));
+    g.text.setAttribute('y', y(mw) + 4);
+    setText(g.text, `${fmtNum(mw)} W`);
+  });
+
+  // Minute ticks at their timestamps, fading within 20 s of either edge.
+  let t = Math.ceil(start / 60000) * 60000;
+  chart.ticks.forEach(k => {
+    const on = t <= now;
+    show(k.line, on); show(k.text, on);
+    if (!on) return;
+    const op = Math.min(1, Math.min(t - start, now - t) / 20000);
+    k.line.setAttribute('x1', x(t)); k.line.setAttribute('x2', x(t)); k.line.setAttribute('opacity', op);
+    k.text.setAttribute('x', x(t)); k.text.setAttribute('opacity', op);
+    const d = new Date(t);
+    setText(k.text, `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+    t += 60000;
+  });
+
+  show(chart.base, chart.baselineMW > 0);
+  if (chart.baselineMW > 0) {
+    chart.base.setAttribute('y1', y(chart.baselineMW)); chart.base.setAttribute('y2', y(chart.baselineMW));
+  }
+
+  // Straight segments between readings: they are discrete, and the chart
+  // must not invent values between them.
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)} ${y(p.mw).toFixed(1)}`).join('');
+  chart.trace.setAttribute('d', line);
+  chart.area.setAttribute('d', pts.length > 1
+    ? `${line}L${x(pts[pts.length - 1].t).toFixed(1)} ${H - B}L${x(pts[0].t).toFixed(1)} ${H - B}Z` : '');
+  const live = pts.length > 0 && chart.onBattery;
+  show(chart.head, live);
+  if (live) {
+    const p = pts[pts.length - 1];
+    chart.head.setAttribute('cx', x(p.t)); chart.head.setAttribute('cy', y(p.mw));
+  }
+}
+
+// ---- Frame loop, running only while the page is visible and Overview is
+// the panel on screen; the header is drawn on the snapshot too, so it stays
+// current on the other tabs.
+let raf = 0;
+function frame() {
+  drawHeader();
+  drawChart();
+  raf = requestAnimationFrame(frame);
+}
+function visibility() {
+  if (document.visibilityState === 'visible' && activeTab === 'overview') { if (!raf) raf = requestAnimationFrame(frame); }
+  else { cancelAnimationFrame(raf); raf = 0; }
+}
+document.addEventListener('visibilitychange', visibility);
+
+// ---- Tabs. The active tab lives here, in memory: the window is hidden on
+// close, not destroyed, so the choice lasts the session.
+let activeTab = 'overview';
+const tabButtons = Array.from(document.querySelectorAll('.tabs button'));
+const panels = Array.from(document.querySelectorAll('.panel'));
+function selectTab(name) {
+  activeTab = name;
+  for (const b of tabButtons) b.setAttribute('aria-selected', String(b.dataset.tab === name));
+  for (const p of panels) p.hidden = p.id !== 'tab-' + name;
+  if (lastView) updateBadge(lastView);
+  visibility();
+}
+document.querySelector('.tabs').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) selectTab(b.dataset.tab);
+});
+
+// ---- The other sections.
+function costLine(c) {
+  if (!c) return '<span class="dim">not measured — Stop or Start it while on battery to price it</span>';
+  if (c.void) return `<span class="dim">VOID - ${esc(c.void)}</span>`;
+  return `${esc(signedW(c.deltaMW))} (${fmtNum(c.beforeMW)} -&gt; ${fmtNum(c.afterMW)} W, ` +
+         `CPU ${c.cpuBefore.toFixed(0)}-&gt;${c.cpuAfter.toFixed(0)}%) · ${esc(c.action)} ${esc(c.when)}`;
+}
+
+// Managed cards are updated in place, keyed by service name, so a pill or
+// button that changes state transitions instead of being replaced.
+const cards = new Map();
+function renderManaged(v) {
+  const box = $('managed');
+  const seen = new Set();
+  v.managed.forEach((s, i) => {
+    seen.add(s.name);
+    let card = cards.get(s.name);
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `<div class="row"><b></b><span class="mono dim"></span><span class="pill"></span>` +
+                       `<span class="grow"></span><button data-toggle="${esc(s.name)}"></button></div>` +
+                       `<div class="note"></div><div class="cost"></div>`;
+      cards.set(s.name, card);
+    }
+    // Keep the server's order without moving nodes that are already in place.
+    if (box.children[i] !== card) box.insertBefore(card, box.children[i] || null);
+    setText(card.querySelector('b'), s.display);
+    setText(card.querySelector('.mono'), `(${s.name})`);
+    const pill = card.querySelector('.pill');
+    pill.className = `pill ${s.running ? 'running' : 'stopped'}`;
+    setText(pill, s.running ? 'running' : 'stopped');
+    const btn = card.querySelector('button');
+    btn.disabled = s.busy;
+    setText(btn, s.busy ? 'Working...' : s.running ? 'Stop' : 'Start');
+    setText(card.querySelector('.note'), s.note);
+    const cost = costLine(s.cost);
+    if (card.querySelector('.cost').innerHTML !== cost) card.querySelector('.cost').innerHTML = cost;
+  });
+  for (const [name, card] of cards) {
+    if (!seen.has(name)) { card.remove(); cards.delete(name); }
+  }
+  $('noManaged').hidden = v.managed.length > 0;
+}
+
+function renderSuggested(v) {
+  $('suggested').innerHTML = v.suggested.map(s =>
+    `<div class="sugg"><span>${esc(s.display)}</span>` +
+    `<span class="mono path" title="${esc(s.path)}">${esc(s.path)}</span>` +
+    `<button data-adopt="${esc(s.name)}" data-on="${s.adopted ? 0 : 1}">${s.adopted ? 'Remove' : 'Manage'}</button></div>`
+  ).join('') || '<div class="dim">Nothing suggested.</div>';
+}
+
+function renderProcesses(v) {
+  const hog = v.settings.hogCPUPercent;
+  $('processes').innerHTML = '<tr><th>Program</th><th class="num">CPU %</th><th class="num">Processes</th></tr>' +
+    v.processes.map(p =>
+      `<tr${p.percent >= hog ? ' class="hot"' : ''}><td class="mono">${esc(p.name)}</td>` +
+      `<td class="num">${p.percent.toFixed(1)}</td><td class="num">${p.count}</td></tr>`
+    ).join('');
+}
+
+// Notices: the whole log, newest first; an entry that was logged but not
+// shown (switch off, or the day's cap spent) is muted and tagged.
+function renderNotices(v) {
+  $('notices').innerHTML = v.notices.map(n =>
+    `<li${n.shown ? '' : ' class="quiet"'}><span class="time mono">${esc(n.when)}</span>` +
+    `<b>${esc(n.title)}</b> · ${esc(n.text)}${n.shown ? '' : '<span class="tag">logged only</span>'}</li>`
+  ).join('') || '<li class="dim">No notifications yet.</li>';
+  $('clearNotices').disabled = v.notices.length === 0;
+}
+
+// The badge counts entries that arrived since the Notifications tab was last
+// on screen. The newest entry seen is remembered by its key; while the tab is
+// open everything counts as seen. The first snapshot seeds the key, so what
+// was already in the log when the window opened is not "new".
+let seenKey = null;
+const noticeKey = n => `${n.when}|${n.title}|${n.text}`;
+function updateBadge(v) {
+  const newest = v.notices.length ? noticeKey(v.notices[0]) : '';
+  if (seenKey === null || activeTab === 'notices' || !v.notices.length) seenKey = newest;
+  let n = 0;
+  for (const x of v.notices) { if (noticeKey(x) === seenKey) break; n++; }
+  $('badge').hidden = n === 0;
+  setText($('badge'), n);
+}
+
+function renderSettings(v) {
+  const f = $('settings');
+  // Leave the form alone while the user is in it, or their typing is lost.
+  if (f.contains(document.activeElement)) return;
+  const s = v.settings;
+  const auto = v.autostartError
+    ? `<span class="dim">Start at logon: ${esc(v.autostartError)}</span>`
+    : `<label><input type="checkbox" name="autostart"${v.autostart ? ' checked' : ''}> Start at logon</label>`;
+  const seg = ['system', 'light', 'dark'].map(t =>
+    `<button type="button" role="radio" aria-checked="${s.theme === t}" data-theme="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('');
+  f.innerHTML =
+    `<label>Appearance <span class="seg" role="radiogroup" aria-label="Appearance">${seg}</span></label>` +
+    `<label><input type="checkbox" name="policy"${s.stopOnBattery ? ' checked' : ''}> Stop managed services on battery</label>` +
+    `<label><input type="checkbox" name="notifications"${s.notifications ? ' checked' : ''}> Show notifications</label>` +
+    auto +
+    `<div class="fields">` +
+    `<label>High draw above baseline, %<input type="number" name="high" min="1" value="${s.highDrawPercent}"></label>` +
+    `<label>Process hog, % CPU<input type="number" name="hog" min="1" value="${s.hogCPUPercent}"></label>` +
+    `<label>Hog sustained, s<input type="number" name="sustain" min="1" value="${s.hogSustainSeconds}"></label>` +
+    `<label>Baseline, W (0 = ask again)<input type="number" name="baseline" min="0" step="0.1" value="${fmtNum(s.baselineMW)}"></label>` +
+    `<label>Max notifications per day<input type="number" name="maxToasts" min="1" value="${s.maxToastsPerDay}"></label>` +
+    `<button type="submit">Save</button></div>` +
+    `<div><button type="button" class="danger" id="quit">Quit devwatt</button></div>`;
+}
+
+let lastView = null;
+function render(v) {
+  lastView = v;
+  updateTheme(v);
+  updateHeader(v);
+  drawHeader();
+  updateChart(v);
+  renderManaged(v);
+  renderSuggested(v);
+  renderProcesses(v);
+  renderNotices(v);
+  updateBadge(v);
+  renderSettings(v);
+}
+
+function refresh() {
+  call('snapshot').then(render, () => {});
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.id === 'setBaseline') call('setBaseline').then(refresh, () => {});
+  else if (b.id === 'themeToggle') {
+    call('setTheme', document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark').then(refresh, () => {});
+  }
+  else if (b.dataset.theme) call('setTheme', b.dataset.theme).then(refresh, () => {}).finally(() => b.blur());
+  else if (b.dataset.toggle) call('toggle', b.dataset.toggle).then(refresh, () => {});
+  else if (b.dataset.adopt) call('adopt', b.dataset.adopt, b.dataset.on === '1').then(refresh, () => {});
+  else if (b.id === 'clearNotices') call('clearNotices').then(refresh, () => {});
+  else if (b.id === 'quit' && confirm('Quit devwatt? Services stay as they are.')) call('quit').then(null, () => {});
+});
+
+$('settings').addEventListener('change', e => {
+  const i = e.target;
+  if (i.name === 'policy') call('setPolicy', i.checked).then(refresh, () => {}).finally(() => i.blur());
+  else if (i.name === 'notifications') call('setNotifications', i.checked).then(refresh, () => {}).finally(() => i.blur());
+  else if (i.name === 'autostart') call('setAutostart', i.checked).then(refresh, () => {}).finally(() => i.blur());
+});
+
+$('settings').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  const num = name => Number(f.elements[name].value);
+  call('setThresholds', num('high'), num('hog'), num('sustain'), Math.round(num('baseline') * 1000), num('maxToasts'))
+    .then(() => { document.activeElement.blur(); refresh(); }, () => {});
+});
+
+buildChart();
+visibility();
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
