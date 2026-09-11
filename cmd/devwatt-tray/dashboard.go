@@ -41,6 +41,7 @@ import (
 	"github.com/I-Vishal-Kumar/devwatt/internal/autostart"
 	"github.com/I-Vishal-Kumar/devwatt/internal/config"
 	"github.com/I-Vishal-Kumar/devwatt/internal/discover"
+	"github.com/I-Vishal-Kumar/devwatt/internal/helper"
 	"github.com/I-Vishal-Kumar/devwatt/internal/icon"
 	"github.com/I-Vishal-Kumar/devwatt/internal/procload"
 )
@@ -534,16 +535,9 @@ func (a *app) setThresholds(highDrawPercent, hogCPUPercent, hogSustainSeconds, b
 // checkbox follows the registry on the next snapshot.
 func (a *app) setAutostart(on bool) error {
 	go func() {
-		var err error
-		if on {
-			var exe string
-			exe, err = os.Executable()
-			if err == nil {
-				err = autostart.InstallUser(exe)
-			}
-		} else {
-			err = autostart.UninstallUser()
-		}
+		// The task belongs to the elevated install; only the helper can
+		// change it.
+		err := helper.Client{}.SetAutostart(on)
 		if err != nil {
 			a.setResult("autostart: " + err.Error())
 			return

@@ -5,7 +5,7 @@
 // Why a split: an elevated window cannot receive input from medium-integrity
 // processes (UIPI), and that broke the keyboard vendor's Fn-key handling
 // whenever the dashboard had focus. So the tray, the dashboard and every
-// measurement run as the user, and only the two calls that need
+// measurement run as the user, and only the few calls that need
 // administrator rights cross into this process.
 //
 // Why no prompt: the helper is the scheduled task devwatt-helper, registered
@@ -22,8 +22,9 @@
 // name to control, which re-checks catalog.Denied under the pipe, so the
 // tray's UI is not the only gate.
 //
-// Protocol: one request per connection, one line each way. `stop <name>` or
-// `start <name>`; the reply is `ok` or `error <text>`.
+// Protocol: one request per connection, one line each way. `stop <name>`,
+// `start <name>`, `autostart on` or `autostart off`; the reply is `ok` or
+// `error <text>`.
 package helper
 
 import (
@@ -31,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -115,6 +117,16 @@ func serveOne(conn net.Conn) {
 		err = control.Stop(name)
 	case verb == "start" && name != "":
 		err = control.Start(name)
+	// The tray's logon task was registered by an elevated install and so
+	// belongs to Administrators; the user cannot replace or delete it, but
+	// this process can, and it is the same executable the task must point at.
+	case verb == "autostart" && name == "on":
+		var exe string
+		if exe, err = os.Executable(); err == nil {
+			err = autostart.InstallUser(exe)
+		}
+	case verb == "autostart" && name == "off":
+		err = autostart.UninstallUser()
 	default:
 		err = fmt.Errorf("malformed request %q", strings.TrimSpace(line))
 	}
@@ -132,6 +144,15 @@ type Client struct{}
 
 func (Client) Stop(name string) error  { return request("stop " + name) }
 func (Client) Start(name string) error { return request("start " + name) }
+
+// SetAutostart registers or removes the tray's logon task through the
+// helper, which owns it.
+func (Client) SetAutostart(on bool) error {
+	if on {
+		return request("autostart on")
+	}
+	return request("autostart off")
+}
 
 func request(line string) error {
 	conn, err := dial()
