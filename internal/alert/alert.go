@@ -30,6 +30,10 @@ type Input struct {
 	OnBattery  bool
 	Window     battery.Measurement
 	WindowFull bool
+	// HoursLeft is the driver's estimate (what Windows shows), when it has
+	// one; the summary quotes it so the two never disagree on the desktop.
+	HoursLeft  float64
+	HoursKnown bool
 	CPU        float64
 	Top        []procload.Proc
 	Managed    []Service
@@ -92,10 +96,11 @@ func (r *Rules) Evaluate(in Input) []Notice {
 	// so the user knows what "on battery" costs before anything else fires.
 	if !r.summarised && steady {
 		r.summarised = true
-		out = append(out, Notice{
-			Title: "On battery",
-			Text:  fmt.Sprintf("%s, swing %s - %.1f h left", battery.Watts(in.Window.AvgMW), battery.Watts(in.Window.SwingMW), in.Window.Runtime().Hours()),
-		})
+		text := fmt.Sprintf("%s, swing %s", battery.Watts(in.Window.AvgMW), battery.Watts(in.Window.SwingMW))
+		if in.HoursKnown {
+			text += fmt.Sprintf(" - %.1f h left", in.HoursLeft)
+		}
+		out = append(out, Notice{Title: "On battery", Text: text})
 	}
 
 	// No baseline yet: ask for one, once per session, at the first number
@@ -114,7 +119,9 @@ func (r *Rules) Evaluate(in Input) []Notice {
 	// High draw: the draw is well above the machine's own baseline, and the
 	// top CPU users are named because they are the likeliest reason.
 	if base := in.Cfg.BaselineMW; base > 0 && steady && in.Window.AvgMW >= base*(100+in.Cfg.HighDrawPercent)/100 && r.ready("high", in.Now) {
-		text := fmt.Sprintf("%s is %d%% above your %s baseline - %.1f h left",
+		// This projection deliberately uses the current draw, not the driver's
+		// smoothed estimate: the point is what this draw costs if it goes on.
+		text := fmt.Sprintf("%s is %d%% above your %s baseline - %.1f h at this draw",
 			battery.Watts(in.Window.AvgMW), (in.Window.AvgMW-base)*100/base, battery.Watts(base), in.Window.Runtime().Hours())
 		if top := topCPU(in.Top); top != "" {
 			text += ". Top CPU: " + top

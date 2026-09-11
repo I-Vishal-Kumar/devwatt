@@ -241,6 +241,8 @@ type app struct {
 	latestOnBattery bool
 	percent         int
 	rateMW          int32 // signed, as the controller reports it: charging is positive
+	hoursLeft       float64
+	hoursKnown      bool // the driver's estimate exists; it does not for a moment after unplugging
 	cpu             float64
 	top             []procload.Proc
 
@@ -757,23 +759,30 @@ func (a *app) poll() {
 		// and that tick shows as still measuring rather than as a 0 W dip.
 		var m battery.Measurement
 		full := false
-		if s.AcOnline {
-			a.window.Reset()
-			a.setStatus(fmt.Sprintf("On AC (%d%%) - unplug to measure", s.Percent()))
-		} else {
+		if !s.AcOnline {
 			if s.Discharging() {
 				a.window.Add(s)
 			}
 			m = a.window.Summary()
 			full = a.window.Len() == battery.DefaultSamples
-			if full && s.Discharging() {
-				a.setStatus(fmt.Sprintf("%s - swing %s - %.1f h left - CPU %.0f%% - %d%%",
-					battery.Watts(m.AvgMW), battery.Watts(m.SwingMW), m.Runtime().Hours(), cpu, m.Percent()))
-			} else {
-				a.setStatus(fmt.Sprintf("Measuring... (%d/%d)", a.window.Len(), battery.DefaultSamples))
-			}
+		} else {
+			a.window.Reset()
 		}
-		a.publish(s, m, full, cpu, top)
+		hoursLeft, hoursKnown := a.publish(s, m, full, cpu, top)
+
+		switch {
+		case s.AcOnline:
+			a.setStatus(fmt.Sprintf("On AC (%d%%) - unplug to measure", s.Percent()))
+		case full && s.Discharging():
+			left := ""
+			if hoursKnown {
+				left = fmt.Sprintf("%.1f h left - ", hoursLeft)
+			}
+			a.setStatus(fmt.Sprintf("%s - swing %s - %sCPU %.0f%% - %d%%",
+				battery.Watts(m.AvgMW), battery.Watts(m.SwingMW), left, cpu, m.Percent()))
+		default:
+			a.setStatus(fmt.Sprintf("Measuring... (%d/%d)", a.window.Len(), battery.DefaultSamples))
+		}
 
 		cfg, managed := a.view()
 		for _, n := range rules.Evaluate(alert.Input{
@@ -781,6 +790,8 @@ func (a *app) poll() {
 			OnBattery:  !s.AcOnline,
 			Window:     m,
 			WindowFull: full,
+			HoursLeft:  hoursLeft,
+			HoursKnown: hoursKnown,
 			CPU:        cpu,
 			Top:        top,
 			Managed:    managed,
@@ -793,18 +804,55 @@ func (a *app) poll() {
 
 // publish is the poll loop handing one tick's view of the machine to the
 // rest of the tray, under ui. A discharge reading joins the history; a
-// reading on AC is not a reading.
-func (a *app) publish(s battery.State, m battery.Measurement, full bool, cpu float64, top []procload.Proc) {
+// reading on AC is not a reading. It returns the time-left projection it
+// stored, so the status line and the rules quote the same number.
+func (a *app) publish(s battery.State, m battery.Measurement, full bool, cpu float64, top []procload.Proc) (hoursLeft float64, hoursKnown bool) {
 	a.ui.Lock()
 	defer a.ui.Unlock()
 	a.latest, a.latestFull, a.latestOnBattery = m, full, !s.AcOnline
 	a.percent, a.rateMW, a.cpu, a.top = s.Percent(), s.RateMW, cpu, top
+	now := time.Now()
 	if s.Discharging() {
-		a.history = append(a.history, point{T: time.Now().UnixMilli(), MW: s.DischargeMW()})
+		a.history = append(a.history, point{T: now.UnixMilli(), MW: s.DischargeMW()})
 		if len(a.history) > historyLen {
 			a.history = a.history[len(a.history)-historyLen:]
 		}
 	}
+	a.hoursLeft, a.hoursKnown = 0, false
+	if s.Discharging() {
+		a.hoursLeft, a.hoursKnown = timeLeft(a.history, s.RemainingMWh, now)
+	}
+	return a.hoursLeft, a.hoursKnown
+}
+
+// Time left is projected from minutes of readings, not from the last
+// twenty seconds: runtime is a long-horizon quantity, and dividing the
+// charge by a twenty-second average made the number jump with every burst
+// and disagree with the estimate Windows shows, which is dampened the same
+// way. The driver's own EstimatedTime is no help — on the machine this was
+// built on it is exactly charge divided by the instantaneous rate. The
+// horizon is the chart's, and a minute of readings is the least that means
+// anything.
+const (
+	timeLeftHorizon     = 5 * time.Minute
+	timeLeftMinReadings = 24 // one minute at pollInterval
+)
+
+// timeLeft projects the remaining charge over the average draw of the
+// readings within the horizon, or reports that there are not enough yet.
+func timeLeft(history []point, remainingMWh uint32, now time.Time) (float64, bool) {
+	since := now.Add(-timeLeftHorizon).UnixMilli()
+	sum, n := 0, 0
+	for _, p := range history {
+		if p.T >= since {
+			sum += p.MW
+			n++
+		}
+	}
+	if n < timeLeftMinReadings || sum == 0 {
+		return 0, false
+	}
+	return float64(remainingMWh) * float64(n) / float64(sum), true
 }
 
 // setBusy marks a service as having a toggle in flight, for the page.

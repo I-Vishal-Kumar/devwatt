@@ -143,8 +143,10 @@ func (m Measurement) Trustworthy() bool {
 	return m.SwingMW < TrustworthySwingMW
 }
 
-// Runtime estimates how long the remaining charge lasts at the sustained
-// average, or 0 when the average is zero.
+// Runtime estimates how long the remaining charge lasts at this measurement's
+// average, or 0 when the average is zero. It is a projection from twenty
+// seconds of readings and is labelled "at this draw" wherever it is shown;
+// the tray's "time left" comes from minutes of readings instead.
 func (m Measurement) Runtime() time.Duration {
 	if m.AvgMW <= 0 {
 		return 0
@@ -245,9 +247,13 @@ type systemBatteryState struct {
 	MaxCapacity       uint32 // mWh
 	RemainingCapacity uint32 // mWh
 	Rate              int32  // mW; negative while discharging
-	EstimatedTime     uint32 // seconds, or 0xFFFFFFFF when the driver has no guess
-	DefaultAlert1     uint32
-	DefaultAlert2     uint32
+	// EstimatedTime is the driver's own time-left guess. On the machine this
+	// was built on it is exactly RemainingCapacity/Rate at the instant, which
+	// jumps with every burst; the tray projects from minutes of its own
+	// readings instead, so the field is only here to keep the layout.
+	EstimatedTime uint32
+	DefaultAlert1 uint32
+	DefaultAlert2 uint32
 }
 
 // POWER_INFORMATION_LEVEL value for SystemBatteryState.

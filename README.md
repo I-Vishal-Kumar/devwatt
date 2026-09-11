@@ -110,6 +110,7 @@ Any process running as you can therefore stop or start an *allowlisted* service 
 Other decisions worth knowing:
 
 - Battery draw comes from `CallNtPowerInformation(SystemBatteryState)` — the same ACPI data WMI's `BatteryStatus` exposes, read directly, with no COM or WMI dependency. A reading counts as a discharge only when unplugged *and* the rate is negative, so the zero the controller reports at the instant you plug in never enters a chart, a window or a measurement.
+- "Time left" is projected from the last five minutes of readings, not the last twenty seconds: runtime is a long-horizon quantity, and a twenty-second window jumps with every burst and disagrees with the dampened estimate Windows shows. The CLI's `RUNTIME` line is the short-window projection and says so — "at this draw".
 - The chart is a persistent SVG driven by `requestAnimationFrame`: time scrolls continuously, the scale eases, and the line is straight segments between real readings — nothing is interpolated.
 - Notifications ride the tray icon's own balloon (`Shell_NotifyIcon`), which Windows 10/11 render as toasts, so there is no COM activation or AppUserModelID to register.
 - All console output is plain ASCII, because PowerShell 5.1 pipes mangle anything else.

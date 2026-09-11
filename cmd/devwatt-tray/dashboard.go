@@ -268,7 +268,8 @@ type view struct {
 	SwingMW        int             `json:"swingMW"`
 	Steady         bool            `json:"steady"`
 	Full           bool            `json:"full"`
-	RuntimeH       float64         `json:"runtimeH"`
+	HoursLeft      float64         `json:"hoursLeft"` // the driver's estimate, as Windows shows it
+	HoursKnown     bool            `json:"hoursKnown"`
 	CPU            float64         `json:"cpu"`
 	BaselineMW     int             `json:"baselineMW"`
 	History        []point         `json:"history"`
@@ -359,7 +360,8 @@ func (a *app) snapshot() (view, error) {
 		SwingMW:    a.latest.SwingMW,
 		Steady:     a.latest.Trustworthy(),
 		Full:       a.latestFull,
-		RuntimeH:   a.latest.Runtime().Hours(),
+		HoursLeft:  a.hoursLeft,
+		HoursKnown: a.hoursKnown,
 		CPU:        a.cpu,
 		BaselineMW: a.cfg.BaselineMW,
 		History:    append(make([]point, 0, len(a.history)), a.history...),
