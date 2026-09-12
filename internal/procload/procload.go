@@ -41,7 +41,18 @@ type proc struct {
 // the same filtering discover applies to protected services, and its time
 // still shows in the whole-machine number cpuload reports.
 func Take() (Snapshot, error) {
-	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	// The documented contract: the snapshot can fail with ERROR_BAD_LENGTH
+	// while the process list is changing under it, and the caller retries
+	// until it succeeds. Bounded here so a machine that never settles is an
+	// error rather than a hang.
+	var snap windows.Handle
+	var err error
+	for attempt := 0; attempt < 8; attempt++ {
+		snap, err = windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+		if !errors.Is(err, windows.ERROR_BAD_LENGTH) {
+			break
+		}
+	}
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("CreateToolhelp32Snapshot: %w", err)
 	}

@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"runtime"
 	"sort"
@@ -86,15 +87,25 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+	role := "tray"
+	if mode == modeHelper {
+		role = "helper"
+	}
+	if err := openLog(role); err != nil {
+		fatal(err)
+	}
+	log.Printf("started pid=%d args=%q elevated=%v", os.Getpid(), os.Args[1:], elevate.Elevated())
 
 	// The helper is this executable in its other role: elevated by its
 	// task, windowless, serving the pipe until it is stopped. A second one
 	// finds the pipe taken and leaves.
 	if mode == modeHelper {
-		if err := helper.Serve(); !errors.Is(err, helper.ErrAlreadyRunning) {
-			fatal(err)
+		err := helper.Serve()
+		if errors.Is(err, helper.ErrAlreadyRunning) {
+			log.Print("another helper is serving; leaving")
+			return
 		}
-		return
+		fatal(err)
 	}
 
 	// The tray runs as the user. Started elevated — an installer's finish
@@ -166,11 +177,14 @@ func systemDPI() uint {
 // fatal shows the error and exits. A tray application has no terminal, and
 // an error nobody sees is the same as silent failure.
 func fatal(err error) {
+	log.Printf("fatal: %v", err)
 	// The only way the conversions fail is an interior NUL, which no error
-	// string here can carry; a nil pointer would still show the box.
+	// string here can carry; a nil pointer would still show the box. The box
+	// is topmost and foreground because at logon it would otherwise open
+	// behind everything and wait there unseen.
 	text, _ := windows.UTF16PtrFromString(err.Error())
 	caption, _ := windows.UTF16PtrFromString("devwatt")
-	windows.MessageBox(0, text, caption, windows.MB_OK|windows.MB_ICONERROR)
+	windows.MessageBox(0, text, caption, windows.MB_OK|windows.MB_ICONERROR|windows.MB_TOPMOST|windows.MB_SETFOREGROUND)
 	os.Exit(1)
 }
 
@@ -708,22 +722,21 @@ func withErrors(line string, errs []string) string {
 // policy, and feeds the rules every tick with the reading, the CPU load,
 // the top programs and the managed set.
 func (a *app) poll() {
-	prev, err := cpuload.Take()
-	if err != nil {
-		a.setStatus(err.Error())
-		return
-	}
-	prevProc, err := procload.Take()
-	if err != nil {
-		a.setStatus(err.Error())
-		return
-	}
-	var rules alert.Rules
+	// The CPU and process snapshots are deltas between ticks, so the first
+	// tick can only record. Nothing here ends the loop: a read that fails
+	// at logon, while the machine is still coming up, is reported and tried
+	// again on the next tick, not turned into a tray that never measures.
+	var (
+		prev     cpuload.Snapshot
+		prevProc procload.Snapshot
+		primed   bool
+		rules    alert.Rules
+	)
 
 	for ; ; time.Sleep(pollInterval) {
 		s, err := battery.Read()
 		if err != nil {
-			a.setStatus(err.Error())
+			a.pollError(err)
 			continue
 		}
 
@@ -740,19 +753,22 @@ func (a *app) poll() {
 
 		cur, err := cpuload.Take()
 		if err != nil {
-			a.setStatus(err.Error())
+			a.pollError(err)
+			continue
+		}
+		procs, err := procload.Take()
+		if err != nil {
+			a.pollError(err)
+			continue
+		}
+		if !primed {
+			prev, prevProc, primed = cur, procs, true
+			a.setStatus("Measuring...")
 			continue
 		}
 		cpu := cpuload.Percent(prev, cur)
-		prev = cur
-
-		procs, err := procload.Take()
-		if err != nil {
-			a.setResult(err.Error())
-			continue
-		}
 		top := procload.Top(prevProc, procs, topProcs)
-		prevProc = procs
+		prev, prevProc = cur, procs
 
 		// Only a discharge reading goes into the window: on the tick the
 		// charger goes in the controller reports 0 before AcOnline flips,
@@ -968,4 +984,14 @@ func (a *app) setResult(text string) {
 	defer a.ui.Unlock()
 	a.resultText = text
 	a.result.SetTitle(text)
+	// Every result line is an event — a toggle's verdict, the policy acting,
+	// an error — and the log is where they can be read back later.
+	log.Printf("result: %s", text)
+}
+
+// pollError puts a poll-loop failure on the status line and in the log. The
+// loop goes on: a snapshot that failed this tick may succeed the next.
+func (a *app) pollError(err error) {
+	log.Printf("poll: %v", err)
+	a.setStatus(err.Error())
 }

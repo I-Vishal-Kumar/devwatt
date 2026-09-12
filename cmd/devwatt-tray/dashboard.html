@@ -59,6 +59,11 @@
            font-size: 11px; font-weight: 600; margin-left: 6px; }
   .toolbar { display: flex; justify-content: flex-end; margin-top: 12px; }
   main { flex: 1; min-height: 0; }
+  /* The tray's own two lines, so what the icon's menu says — including an
+     error the page cannot otherwise show — is visible here too. */
+  footer { display: flex; gap: 16px; padding: 6px 0; border-top: 1px solid var(--line);
+           font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+  footer span { overflow: hidden; text-overflow: ellipsis; }
   .panel { height: 100%; overflow-y: auto; padding-bottom: 24px;
            scrollbar-width: thin; scrollbar-color: var(--line) var(--bg); }
   .panel > h2:first-child, .panel > p:first-child { margin-top: 16px; }
@@ -172,6 +177,7 @@
     <form id="settings"></form>
   </section>
 </main>
+<footer><span id="trayStatus"></span><span id="trayResult"></span></footer>
 
 <script>
 'use strict';
@@ -524,6 +530,8 @@ function render(v) {
   renderNotices(v);
   updateBadge(v);
   renderSettings(v);
+  setText($('trayStatus'), 'tray: ' + v.status);
+  setText($('trayResult'), 'last: ' + v.result);
 }
 
 function refresh() {
